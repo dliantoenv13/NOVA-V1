@@ -13,10 +13,12 @@ import android.view.inputmethod.InputMethodManager;
 import android.content.Context;
 import android.widget.*;
 
-import org.json.JSONArray;
 import org.json.JSONObject;
 
-import java.io.*;
+import java.io.BufferedReader;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
@@ -24,6 +26,9 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public class MainActivity extends Activity {
+
+    private static final String NOVA_API =
+            "https://nova-ai-server.rofikaldianto13.workers.dev/";
 
     private LinearLayout messages;
     private EditText input;
@@ -33,8 +38,6 @@ public class MainActivity extends Activity {
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final ExecutorService executor =
             Executors.newSingleThreadExecutor();
-
-    private final JSONArray history = new JSONArray();
 
     private final int BG = Color.rgb(8, 13, 24);
     private final int PANEL = Color.rgb(17, 27, 44);
@@ -62,7 +65,6 @@ public class MainActivity extends Activity {
         LinearLayout brand = new LinearLayout(this);
         brand.setOrientation(LinearLayout.VERTICAL);
         brand.setPadding(dp(12), 0, 0, 0);
-
         brand.addView(text("NOVA", 20, WHITE, true));
         brand.addView(text("YOUR PERSONAL AI", 10, MUTED, true));
 
@@ -76,7 +78,6 @@ public class MainActivity extends Activity {
         status = text("● ONLINE", 11,
                 Color.rgb(72, 220, 155), true);
         header.addView(status);
-
         root.addView(header);
 
         View line = new View(this);
@@ -90,14 +91,13 @@ public class MainActivity extends Activity {
         messages = new LinearLayout(this);
         messages.setOrientation(LinearLayout.VERTICAL);
         messages.setPadding(dp(16), dp(20), dp(16), dp(20));
-
         scroll.addView(messages);
 
         root.addView(scroll,
                 new LinearLayout.LayoutParams(-1, 0, 1));
 
         addMessage(
-                "Halo! Saya NOVA. ✨\n\nSekarang saya sudah siap terhubung dengan AI. Apa yang ingin kita lakukan hari ini?",
+                "Halo! Saya NOVA. ✨\n\nSekarang saya terhubung dengan mesin AI NOVA. Apa yang ingin kita lakukan hari ini?",
                 false
         );
 
@@ -135,11 +135,6 @@ public class MainActivity extends Activity {
 
         if (message.isEmpty()) return;
 
-        if (BuildConfig.GEMINI_API_KEY.isEmpty()) {
-            addMessage("API Key belum tersedia. Periksa GitHub Secrets dan build APK.", false);
-            return;
-        }
-
         input.setText("");
         addMessage(message, true);
 
@@ -153,7 +148,7 @@ public class MainActivity extends Activity {
 
         executor.execute(() -> {
             try {
-                String answer = askGemini(message);
+                String answer = askNova(message);
 
                 handler.post(() -> {
                     messages.removeView(loading);
@@ -165,8 +160,10 @@ public class MainActivity extends Activity {
             } catch (Exception e) {
                 handler.post(() -> {
                     messages.removeView(loading);
-                    addMessage("Maaf, terjadi masalah saat menghubungi AI:\n\n"
-                            + e.getMessage(), false);
+                    addMessage(
+                            "Maaf, NOVA mengalami masalah:\n\n" + e.getMessage(),
+                            false
+                    );
                     status.setText("● ERROR");
                     status.setTextColor(Color.RED);
                 });
@@ -174,66 +171,30 @@ public class MainActivity extends Activity {
         });
     }
 
-    private String askGemini(String message) throws Exception {
-
-        JSONObject userPart = new JSONObject();
-        userPart.put("text", message);
-
-        JSONObject userContent = new JSONObject();
-        userContent.put("role", "user");
-        userContent.put("parts", new JSONArray().put(userPart));
-
-        JSONArray requestHistory = new JSONArray();
-
-        for (int i = 0; i < history.length(); i++) {
-            requestHistory.put(history.getJSONObject(i));
-        }
-
-        requestHistory.put(userContent);
-
-        JSONObject systemPart = new JSONObject();
-        systemPart.put("text",
-                "Kamu adalah NOVA, asisten AI pribadi yang ramah, cerdas, "
-                + "natural, dan membantu. Jawab menggunakan bahasa pengguna. "
-                + "Berikan jawaban jelas dan tidak bertele-tele.");
-
-        JSONObject systemInstruction = new JSONObject();
-        systemInstruction.put("parts",
-                new JSONArray().put(systemPart));
-
-        JSONObject body = new JSONObject();
-        body.put("system_instruction", systemInstruction);
-        body.put("contents", requestHistory);
-
-        JSONObject generation = new JSONObject();
-        generation.put("temperature", 0.7);
-        generation.put("maxOutputTokens", 1024);
-        body.put("generationConfig", generation);
-
-        URL url = new URL(
-                "https://generativelanguage.googleapis.com/v1beta/models/"
-                + "gemini-3.1-flash-lite:generateContent"
-        );
-
-        HttpURLConnection connection =
-                (HttpURLConnection) url.openConnection();
-
-        connection.setRequestMethod("POST");
-        connection.setConnectTimeout(20000);
-        connection.setReadTimeout(60000);
-        connection.setDoOutput(true);
-
-        connection.setRequestProperty(
-                "Content-Type", "application/json; charset=UTF-8");
-
-        connection.setRequestProperty(
-                "x-goog-api-key", BuildConfig.GEMINI_API_KEY);
+    private String askNova(String message) throws Exception {
+        HttpURLConnection connection = null;
 
         try {
+            URL url = new URL(NOVA_API);
+            connection = (HttpURLConnection) url.openConnection();
+
+            connection.setRequestMethod("POST");
+            connection.setConnectTimeout(20000);
+            connection.setReadTimeout(90000);
+            connection.setDoOutput(true);
+
+            connection.setRequestProperty(
+                    "Content-Type", "application/json; charset=UTF-8"
+            );
+            connection.setRequestProperty("Accept", "application/json");
+
+            JSONObject body = new JSONObject();
+            body.put("message", message);
+
             byte[] data = body.toString().getBytes(StandardCharsets.UTF_8);
 
-            try (OutputStream os = connection.getOutputStream()) {
-                os.write(data);
+            try (OutputStream output = connection.getOutputStream()) {
+                output.write(data);
             }
 
             int code = connection.getResponseCode();
@@ -241,6 +202,10 @@ public class MainActivity extends Activity {
             InputStream stream = code >= 200 && code < 300
                     ? connection.getInputStream()
                     : connection.getErrorStream();
+
+            if (stream == null) {
+                throw new Exception("Server tidak memberikan respons.");
+            }
 
             StringBuilder result = new StringBuilder();
 
@@ -255,47 +220,29 @@ public class MainActivity extends Activity {
             JSONObject response = new JSONObject(result.toString());
 
             if (code < 200 || code >= 300) {
-                String detail = response.optJSONObject("error") != null
-                        ? response.getJSONObject("error").optString(
-                                "message", "HTTP " + code)
-                        : "HTTP " + code;
-
+                String detail = response.optString(
+                        "detail",
+                        response.optString("error", "HTTP " + code)
+                );
                 throw new Exception(detail);
             }
 
-            JSONArray candidates = response.getJSONArray("candidates");
-            JSONObject content =
-                    candidates.getJSONObject(0).getJSONObject("content");
+            String answer = response.optString("reply", "").trim();
 
-            JSONArray parts = content.getJSONArray("parts");
-
-            StringBuilder answer = new StringBuilder();
-
-            for (int i = 0; i < parts.length(); i++) {
-                answer.append(parts.getJSONObject(i).optString("text", ""));
+            if (answer.isEmpty()) {
+                throw new Exception("Server belum mengirim jawaban AI.");
             }
 
-            if (answer.length() == 0) {
-                throw new Exception("AI tidak mengirim jawaban teks.");
-            }
-
-            history.put(userContent);
-
-            JSONObject modelContent = new JSONObject();
-            modelContent.put("role", "model");
-            modelContent.put("parts", parts);
-
-            history.put(modelContent);
-
-            return answer.toString();
+            return answer;
 
         } finally {
-            connection.disconnect();
+            if (connection != null) {
+                connection.disconnect();
+            }
         }
     }
 
     private TextView addMessage(String value, boolean user) {
-
         LinearLayout wrapper = new LinearLayout(this);
         wrapper.setOrientation(LinearLayout.VERTICAL);
         wrapper.setGravity(user ? Gravity.RIGHT : Gravity.LEFT);
@@ -310,11 +257,11 @@ public class MainActivity extends Activity {
         TextView bubble = text(value, 14, WHITE, false);
         bubble.setPadding(dp(15), dp(12), dp(15), dp(12));
         bubble.setBackground(round(
-                user ? Color.rgb(26, 69, 111) : PANEL, 18));
+                user ? Color.rgb(26, 69, 111) : PANEL, 18
+        ));
 
         LinearLayout.LayoutParams params =
                 new LinearLayout.LayoutParams(-2, -2);
-
         params.topMargin = dp(6);
         params.bottomMargin = dp(18);
 
@@ -324,13 +271,11 @@ public class MainActivity extends Activity {
 
         scroll.post(() -> scroll.fullScroll(View.FOCUS_DOWN));
 
-        return wrapper.getChildAt(1) instanceof TextView
-                ? (TextView) wrapper.getChildAt(1) : bubble;
+        return bubble;
     }
 
     private TextView text(
             String value, int size, int color, boolean bold) {
-
         TextView view = new TextView(this);
         view.setText(value);
         view.setTextSize(size);
