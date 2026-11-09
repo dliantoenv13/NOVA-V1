@@ -146,8 +146,10 @@ public class MainActivity extends Activity {
         status.setText("● THINKING");
         status.setTextColor(BLUE);
 
-        TextView loading = addMessage("NOVA sedang berpikir
-● ○ ○", false);
+        TextView loading = addMessage(
+                "NOVA sedang berpikir" + (char) 10 + "● ○ ○", false
+        );
+
         startThinkingAnimation(loading);
 
         executor.execute(() -> {
@@ -165,9 +167,8 @@ public class MainActivity extends Activity {
                 handler.post(() -> {
                     stopThinkingAnimation(loading);
                     addMessage(
-                            "Maaf, NOVA mengalami masalah:
-
-" + e.getMessage(),
+                            "Maaf, NOVA mengalami masalah:"
+                                    + (char) 10 + (char) 10 + e.getMessage(),
                             false
                     );
                     status.setText("● ERROR");
@@ -193,9 +194,9 @@ public class MainActivity extends Activity {
                 if (loading.getParent() == null) return;
 
                 loading.setText(
-                        "NOVA sedang berpikir
-" + frames[index]
+                        "NOVA sedang berpikir" + (char) 10 + frames[index]
                 );
+
                 loading.setAlpha(index % 2 == 0 ? 1.0f : 0.72f);
 
                 index = (index + 1) % frames.length;
@@ -215,7 +216,6 @@ public class MainActivity extends Activity {
         loading.animate().cancel();
         loading.setAlpha(1.0f);
 
-        // Hapus seluruh wadah pesan, bukan hanya teks bubble.
         if (loading.getParent() instanceof View) {
             View wrapper = (View) loading.getParent();
 
@@ -225,7 +225,7 @@ public class MainActivity extends Activity {
         }
     }
 
-        private String askNova(String message) throws Exception {
+    private String askNova(String message) throws Exception {
         HttpURLConnection connection = null;
 
         try {
