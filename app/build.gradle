@@ -3,10 +3,17 @@ plugins {
 }
 
 android {
+    buildFeatures {
+        buildConfig true
+    }
+
     namespace 'com.nova.ai'
     compileSdk 35
 
     defaultConfig {
+        def geminiKey = project.findProperty("GEMINI_API_KEY") ?: ""
+        buildConfigField "String", "GEMINI_API_KEY", "\"${geminiKey}\""
+
         applicationId 'com.nova.ai'
         minSdk 26
         targetSdk 35

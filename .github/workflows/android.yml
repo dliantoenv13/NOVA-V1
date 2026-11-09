@@ -28,7 +28,9 @@ jobs:
           gradle-version: '8.9'
 
       - name: Build APK
-        run: gradle --no-daemon assembleDebug
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: gradle --no-daemon -PGEMINI_API_KEY="$GEMINI_API_KEY" assembleDebug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4

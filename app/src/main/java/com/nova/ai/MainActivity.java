@@ -2,6 +2,8 @@ package com.nova.ai;
 
 import android.app.Activity;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
@@ -11,11 +13,28 @@ import android.view.inputmethod.InputMethodManager;
 import android.content.Context;
 import android.widget.*;
 
+import org.json.JSONArray;
+import org.json.JSONObject;
+
+import java.io.*;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
 public class MainActivity extends Activity {
 
     private LinearLayout messages;
     private EditText input;
     private ScrollView scroll;
+    private TextView status;
+
+    private final Handler handler = new Handler(Looper.getMainLooper());
+    private final ExecutorService executor =
+            Executors.newSingleThreadExecutor();
+
+    private final JSONArray history = new JSONArray();
 
     private final int BG = Color.rgb(8, 13, 24);
     private final int PANEL = Color.rgb(17, 27, 44);
@@ -34,7 +53,6 @@ public class MainActivity extends Activity {
         root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundColor(BG);
 
-        // HEADER
         LinearLayout header = new LinearLayout(this);
         header.setGravity(Gravity.CENTER_VERTICAL);
         header.setPadding(dp(20), dp(14), dp(20), dp(14));
@@ -53,10 +71,10 @@ public class MainActivity extends Activity {
 
         View spacer = new View(this);
         header.addView(spacer,
-            new LinearLayout.LayoutParams(0, 1, 1));
+                new LinearLayout.LayoutParams(0, 1, 1));
 
-        TextView status = text("● ONLINE", 11,
-            Color.rgb(72, 220, 155), true);
+        status = text("● ONLINE", 11,
+                Color.rgb(72, 220, 155), true);
         header.addView(status);
 
         root.addView(header);
@@ -64,9 +82,8 @@ public class MainActivity extends Activity {
         View line = new View(this);
         line.setBackgroundColor(Color.rgb(28, 42, 62));
         root.addView(line,
-            new LinearLayout.LayoutParams(-1, dp(1)));
+                new LinearLayout.LayoutParams(-1, dp(1)));
 
-        // CHAT AREA
         scroll = new ScrollView(this);
         scroll.setFillViewport(true);
 
@@ -77,14 +94,13 @@ public class MainActivity extends Activity {
         scroll.addView(messages);
 
         root.addView(scroll,
-            new LinearLayout.LayoutParams(-1, 0, 1));
+                new LinearLayout.LayoutParams(-1, 0, 1));
 
         addMessage(
-            "Halo! Saya NOVA. ✨\n\nSaya siap membantu kamu. Apa yang ingin kita lakukan hari ini?",
-            false
+                "Halo! Saya NOVA. ✨\n\nSekarang saya sudah siap terhubung dengan AI. Apa yang ingin kita lakukan hari ini?",
+                false
         );
 
-        // COMPOSER
         LinearLayout composer = new LinearLayout(this);
         composer.setGravity(Gravity.CENTER_VERTICAL);
         composer.setPadding(dp(12), dp(12), dp(12), dp(12));
@@ -98,11 +114,10 @@ public class MainActivity extends Activity {
         input.setSingleLine(false);
         input.setMaxLines(4);
         input.setPadding(dp(14), dp(12), dp(14), dp(12));
-        input.setBackground(round(
-            Color.rgb(29, 43, 64), 22));
+        input.setBackground(round(Color.rgb(29, 43, 64), 22));
 
         composer.addView(input,
-            new LinearLayout.LayoutParams(0, -2, 1));
+                new LinearLayout.LayoutParams(0, -2, 1));
 
         TextView send = text("➤", 23, BLUE, true);
         send.setGravity(Gravity.CENTER);
@@ -110,7 +125,6 @@ public class MainActivity extends Activity {
         send.setOnClickListener(v -> sendMessage());
 
         composer.addView(send);
-
         root.addView(composer);
 
         setContentView(root);
@@ -121,57 +135,201 @@ public class MainActivity extends Activity {
 
         if (message.isEmpty()) return;
 
+        if (BuildConfig.GEMINI_API_KEY.isEmpty()) {
+            addMessage("API Key belum tersedia. Periksa GitHub Secrets dan build APK.", false);
+            return;
+        }
+
         input.setText("");
         addMessage(message, true);
 
-        ((InputMethodManager) getSystemService(
-            Context.INPUT_METHOD_SERVICE))
-            .hideSoftInputFromWindow(input.getWindowToken(), 0);
+        ((InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE))
+                .hideSoftInputFromWindow(input.getWindowToken(), 0);
 
-        // Temporary prototype response.
-        addMessage(
-            "Pesan diterima! ✨\n\nIntegrasi AI NOVA akan diaktifkan pada tahap berikutnya.",
-            false
-        );
+        status.setText("● THINKING");
+        status.setTextColor(BLUE);
+
+        TextView loading = addMessage("NOVA sedang berpikir...", false);
+
+        executor.execute(() -> {
+            try {
+                String answer = askGemini(message);
+
+                handler.post(() -> {
+                    messages.removeView(loading);
+                    addMessage(answer, false);
+                    status.setText("● ONLINE");
+                    status.setTextColor(Color.rgb(72, 220, 155));
+                });
+
+            } catch (Exception e) {
+                handler.post(() -> {
+                    messages.removeView(loading);
+                    addMessage("Maaf, terjadi masalah saat menghubungi AI:\n\n"
+                            + e.getMessage(), false);
+                    status.setText("● ERROR");
+                    status.setTextColor(Color.RED);
+                });
+            }
+        });
     }
 
-    private void addMessage(String value, boolean user) {
+    private String askGemini(String message) throws Exception {
+
+        JSONObject userPart = new JSONObject();
+        userPart.put("text", message);
+
+        JSONObject userContent = new JSONObject();
+        userContent.put("role", "user");
+        userContent.put("parts", new JSONArray().put(userPart));
+
+        JSONArray requestHistory = new JSONArray();
+
+        for (int i = 0; i < history.length(); i++) {
+            requestHistory.put(history.getJSONObject(i));
+        }
+
+        requestHistory.put(userContent);
+
+        JSONObject systemPart = new JSONObject();
+        systemPart.put("text",
+                "Kamu adalah NOVA, asisten AI pribadi yang ramah, cerdas, "
+                + "natural, dan membantu. Jawab menggunakan bahasa pengguna. "
+                + "Berikan jawaban jelas dan tidak bertele-tele.");
+
+        JSONObject systemInstruction = new JSONObject();
+        systemInstruction.put("parts",
+                new JSONArray().put(systemPart));
+
+        JSONObject body = new JSONObject();
+        body.put("system_instruction", systemInstruction);
+        body.put("contents", requestHistory);
+
+        JSONObject generation = new JSONObject();
+        generation.put("temperature", 0.7);
+        generation.put("maxOutputTokens", 1024);
+        body.put("generationConfig", generation);
+
+        URL url = new URL(
+                "https://generativelanguage.googleapis.com/v1beta/models/"
+                + "gemini-3.1-flash-lite:generateContent"
+        );
+
+        HttpURLConnection connection =
+                (HttpURLConnection) url.openConnection();
+
+        connection.setRequestMethod("POST");
+        connection.setConnectTimeout(20000);
+        connection.setReadTimeout(60000);
+        connection.setDoOutput(true);
+
+        connection.setRequestProperty(
+                "Content-Type", "application/json; charset=UTF-8");
+
+        connection.setRequestProperty(
+                "x-goog-api-key", BuildConfig.GEMINI_API_KEY);
+
+        try {
+            byte[] data = body.toString().getBytes(StandardCharsets.UTF_8);
+
+            try (OutputStream os = connection.getOutputStream()) {
+                os.write(data);
+            }
+
+            int code = connection.getResponseCode();
+
+            InputStream stream = code >= 200 && code < 300
+                    ? connection.getInputStream()
+                    : connection.getErrorStream();
+
+            StringBuilder result = new StringBuilder();
+
+            try (BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(stream, StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    result.append(line);
+                }
+            }
+
+            JSONObject response = new JSONObject(result.toString());
+
+            if (code < 200 || code >= 300) {
+                String detail = response.optJSONObject("error") != null
+                        ? response.getJSONObject("error").optString(
+                                "message", "HTTP " + code)
+                        : "HTTP " + code;
+
+                throw new Exception(detail);
+            }
+
+            JSONArray candidates = response.getJSONArray("candidates");
+            JSONObject content =
+                    candidates.getJSONObject(0).getJSONObject("content");
+
+            JSONArray parts = content.getJSONArray("parts");
+
+            StringBuilder answer = new StringBuilder();
+
+            for (int i = 0; i < parts.length(); i++) {
+                answer.append(parts.getJSONObject(i).optString("text", ""));
+            }
+
+            if (answer.length() == 0) {
+                throw new Exception("AI tidak mengirim jawaban teks.");
+            }
+
+            history.put(userContent);
+
+            JSONObject modelContent = new JSONObject();
+            modelContent.put("role", "model");
+            modelContent.put("parts", parts);
+
+            history.put(modelContent);
+
+            return answer.toString();
+
+        } finally {
+            connection.disconnect();
+        }
+    }
+
+    private TextView addMessage(String value, boolean user) {
 
         LinearLayout wrapper = new LinearLayout(this);
         wrapper.setOrientation(LinearLayout.VERTICAL);
         wrapper.setGravity(user ? Gravity.RIGHT : Gravity.LEFT);
 
         TextView label = text(
-            user ? "YOU" : "✦ NOVA",
-            10,
-            user ? BLUE : MUTED,
-            true
+                user ? "YOU" : "✦ NOVA",
+                10,
+                user ? BLUE : MUTED,
+                true
         );
 
         TextView bubble = text(value, 14, WHITE, false);
         bubble.setPadding(dp(15), dp(12), dp(15), dp(12));
         bubble.setBackground(round(
-            user ? Color.rgb(26, 69, 111) : PANEL,
-            18
-        ));
+                user ? Color.rgb(26, 69, 111) : PANEL, 18));
 
-        LinearLayout.LayoutParams bubbleParams =
-            new LinearLayout.LayoutParams(-2, -2);
-        bubbleParams.topMargin = dp(6);
-        bubbleParams.bottomMargin = dp(18);
-        bubbleParams.width = -2;
+        LinearLayout.LayoutParams params =
+                new LinearLayout.LayoutParams(-2, -2);
+
+        params.topMargin = dp(6);
+        params.bottomMargin = dp(18);
 
         wrapper.addView(label);
-        wrapper.addView(bubble, bubbleParams);
-
+        wrapper.addView(bubble, params);
         messages.addView(wrapper);
 
-        scroll.post(() ->
-            scroll.fullScroll(View.FOCUS_DOWN));
+        scroll.post(() -> scroll.fullScroll(View.FOCUS_DOWN));
+
+        return wrapper.getChildAt(1) instanceof TextView
+                ? (TextView) wrapper.getChildAt(1) : bubble;
     }
 
     private TextView text(
-        String value, int size, int color, boolean bold) {
+            String value, int size, int color, boolean bold) {
 
         TextView view = new TextView(this);
         view.setText(value);
@@ -179,8 +337,7 @@ public class MainActivity extends Activity {
         view.setTextColor(color);
 
         if (bold) {
-            view.setTypeface(Typeface.DEFAULT,
-                Typeface.BOLD);
+            view.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         }
 
         return view;
@@ -195,6 +352,12 @@ public class MainActivity extends Activity {
 
     private int dp(int value) {
         return (int) (value *
-            getResources().getDisplayMetrics().density + 0.5f);
+                getResources().getDisplayMetrics().density + 0.5f);
+    }
+
+    @Override
+    protected void onDestroy() {
+        executor.shutdownNow();
+        super.onDestroy();
     }
 }
