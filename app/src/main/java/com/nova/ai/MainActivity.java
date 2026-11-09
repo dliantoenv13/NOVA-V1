@@ -9,6 +9,7 @@ import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.view.Gravity;
 import android.view.View;
+import android.view.ViewGroup;
 import android.view.inputmethod.InputMethodManager;
 import android.content.Context;
 import android.widget.*;
@@ -36,6 +37,7 @@ public class MainActivity extends Activity {
     private TextView status;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
+    private Runnable thinkingAnimation;
     private final ExecutorService executor =
             Executors.newSingleThreadExecutor();
 
@@ -144,14 +146,16 @@ public class MainActivity extends Activity {
         status.setText("● THINKING");
         status.setTextColor(BLUE);
 
-        TextView loading = addMessage("NOVA sedang berpikir...", false);
+        TextView loading = addMessage("NOVA sedang berpikir
+● ○ ○", false);
+        startThinkingAnimation(loading);
 
         executor.execute(() -> {
             try {
                 String answer = askNova(message);
 
                 handler.post(() -> {
-                    messages.removeView(loading);
+                    stopThinkingAnimation(loading);
                     addMessage(answer, false);
                     status.setText("● ONLINE");
                     status.setTextColor(Color.rgb(72, 220, 155));
@@ -159,9 +163,11 @@ public class MainActivity extends Activity {
 
             } catch (Exception e) {
                 handler.post(() -> {
-                    messages.removeView(loading);
+                    stopThinkingAnimation(loading);
                     addMessage(
-                            "Maaf, NOVA mengalami masalah:\n\n" + e.getMessage(),
+                            "Maaf, NOVA mengalami masalah:
+
+" + e.getMessage(),
                             false
                     );
                     status.setText("● ERROR");
@@ -171,7 +177,55 @@ public class MainActivity extends Activity {
         });
     }
 
-    private String askNova(String message) throws Exception {
+    private void startThinkingAnimation(TextView loading) {
+        final String[] frames = {
+                "● ○ ○",
+                "○ ● ○",
+                "○ ○ ●",
+                "○ ● ○"
+        };
+
+        thinkingAnimation = new Runnable() {
+            int index = 0;
+
+            @Override
+            public void run() {
+                if (loading.getParent() == null) return;
+
+                loading.setText(
+                        "NOVA sedang berpikir
+" + frames[index]
+                );
+                loading.setAlpha(index % 2 == 0 ? 1.0f : 0.72f);
+
+                index = (index + 1) % frames.length;
+                handler.postDelayed(this, 320);
+            }
+        };
+
+        handler.post(thinkingAnimation);
+    }
+
+    private void stopThinkingAnimation(TextView loading) {
+        if (thinkingAnimation != null) {
+            handler.removeCallbacks(thinkingAnimation);
+            thinkingAnimation = null;
+        }
+
+        loading.animate().cancel();
+        loading.setAlpha(1.0f);
+
+        // Hapus seluruh wadah pesan, bukan hanya teks bubble.
+        if (loading.getParent() instanceof View) {
+            View wrapper = (View) loading.getParent();
+
+            if (wrapper.getParent() instanceof ViewGroup) {
+                ((ViewGroup) wrapper.getParent()).removeView(wrapper);
+            }
+        }
+    }
+
+        private String askNova(String message) throws Exception {
         HttpURLConnection connection = null;
 
         try {
