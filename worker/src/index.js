@@ -52,9 +52,22 @@ export default {
         }
       );
 
+      const reply =
+        result?.response ??
+        result?.choices?.[0]?.message?.content ??
+        result?.choices?.[0]?.text ??
+        result?.content;
+
+      if (!reply) {
+        return json({
+          error: "AI returned an unexpected response format",
+          modelResult: result
+        }, 502);
+      }
+
       return json({
         assistant: "NOVA",
-        reply: result.response
+        reply: reply
       });
 
     } catch (error) {
